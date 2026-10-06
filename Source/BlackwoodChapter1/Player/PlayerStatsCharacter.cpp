@@ -15,6 +15,10 @@
 
 #include "GameFramework/CharacterMovementComponent.h"
 
+APlayerStatsCharacter::APlayerStatsCharacter()
+{
+	InteractionComp = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+}
 
 void APlayerStatsCharacter::BeginPlay()
 {

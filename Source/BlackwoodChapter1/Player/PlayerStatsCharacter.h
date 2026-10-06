@@ -28,6 +28,9 @@ class BLACKWOODCHAPTER1_API APlayerStatsCharacter : public AStatsCharacter
 {
 	GENERATED_BODY()
 
+public:
+	APlayerStatsCharacter();
+
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
 
