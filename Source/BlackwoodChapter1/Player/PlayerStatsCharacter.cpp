@@ -14,7 +14,13 @@
 #include "BlackwoodChapter1.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Modifiers/HandInventoryComponent.h"
 
+APlayerStatsCharacter::APlayerStatsCharacter()
+{
+	InteractionComp = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+	InventoryComp = CreateDefaultSubobject<UHandInventoryComponent>(TEXT("HandInventoryComponent"));
+}
 
 void APlayerStatsCharacter::BeginPlay()
 {
@@ -37,7 +43,7 @@ void APlayerStatsCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInp
 	if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
 		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerStatsCharacter::OnInteractTriggered);
-
+		EnhancedInput->BindAction(DropAction, ETriggerEvent::Started, this, &APlayerStatsCharacter::OnDropTriggered);
 	}
 	else
 	{
@@ -51,5 +57,13 @@ void APlayerStatsCharacter::OnInteractTriggered(const FInputActionValue& Value)
 	if (InteractionComp)
 	{
 		InteractionComp->TryInteract();
+	}
+}
+
+void APlayerStatsCharacter::OnDropTriggered(const FInputActionValue& Value)
+{
+	if (InventoryComp)
+	{
+		InventoryComp->DropItem();
 	}
 }

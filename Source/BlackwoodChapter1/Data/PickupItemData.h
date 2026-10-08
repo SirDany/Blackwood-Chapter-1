@@ -9,7 +9,7 @@
 /**
  * 
  */
-UCLASS()
+UCLASS(BlueprintType)
 class BLACKWOODCHAPTER1_API UPickupItemData : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
@@ -20,6 +20,10 @@ public:
 
     UPROPERTY(EditDefaultsOnly, Category = "Item")
     UStaticMesh* WorldMesh;
+
+    /** Mesh to display when holding this item in hand (uses WorldMesh if not specified) */
+    UPROPERTY(EditDefaultsOnly, Category = "Item")
+    UStaticMesh* HeldMesh;
 
     UPROPERTY(EditDefaultsOnly, Category = "Item")
     UTexture2D* Icon;

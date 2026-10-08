@@ -13,6 +13,7 @@
 class UInputAction;
 class UInputMappingContext;
 class UInteractionComponent;
+class UHandInventoryComponent;
 class UInputComponent;
 class USkeletalMeshComponent;
 class UCameraComponent;
@@ -28,10 +29,14 @@ class BLACKWOODCHAPTER1_API APlayerStatsCharacter : public AStatsCharacter
 {
 	GENERATED_BODY()
 
+public:
+	APlayerStatsCharacter();
+
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
 
 	void OnInteractTriggered(const FInputActionValue& Value);
+	void OnDropTriggered(const FInputActionValue& Value);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -39,9 +44,15 @@ class BLACKWOODCHAPTER1_API APlayerStatsCharacter : public AStatsCharacter
 	UPROPERTY(VisibleAnywhere, Category = "Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComp;
 
+	UPROPERTY(VisibleAnywhere, Category = "Inventory")
+	TObjectPtr<UHandInventoryComponent> InventoryComp;
+
 protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> InteractAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> DropAction;
 	
 };

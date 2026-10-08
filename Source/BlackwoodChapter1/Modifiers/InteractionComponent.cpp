@@ -35,13 +35,34 @@ void UInteractionComponent::TryInteract()
 	const FVector Start = GetOwnerViewLocation();
 	const FVector End = Start + GetOwnerViewRotation().Vector() * InteractRange;
 
-	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility))
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(GetOwner());
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, QueryParams))
 	{
-		if (AActor* HitActor = Hit.GetActor())
+		AActor* HitActor = Hit.GetActor();
+
+		if (!HitActor)
 		{
-			if (HitActor->Implements<UInteractable>())
+			return;
+		}
+
+		// First: allow the actor itself to implement IInteractable.
+		if (HitActor->Implements<UInteractable>())
+		{
+			IInteractable::Execute_Interact(HitActor, GetOwner());
+			return;
+		}
+
+		// Otherwise look for an interactable component on the actor.
+		TArray<UActorComponent*> Components = HitActor->GetComponents().Array();
+
+		for (UActorComponent* Component : Components)
+		{
+			if (Component && Component->Implements<UInteractable>())
 			{
-				IInteractable::Execute_Interact(HitActor, GetOwner());
+				IInteractable::Execute_Interact(Component, GetOwner());
+				return;
 			}
 		}
 	}
