@@ -1,8 +1,11 @@
+
 #include "Modifiers/HandInventoryComponent.h"
 
 #include "Camera/CameraComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Data/PickupItemData.h"
 #include "Engine/World.h"
+#include "GameFramework/Actor.h"
 #include "Objects/HeldItem.h"
 #include "Modifiers/PickupComponent.h"
 
@@ -12,6 +15,7 @@ UHandInventoryComponent::UHandInventoryComponent()
 
 	HeldItemData = nullptr;
 	HeldItemActor = nullptr;
+	HeldActorClass = nullptr;
 }
 
 void UHandInventoryComponent::BeginPlay()
@@ -19,25 +23,41 @@ void UHandInventoryComponent::BeginPlay()
 	Super::BeginPlay();
 }
 
-void UHandInventoryComponent::PickupItem(UPickupItemData* ItemData)
+bool UHandInventoryComponent::PickupItem(
+	UPickupItemData* ItemData,
+	TSubclassOf<AActor> ActorClass)
 {
-	if (!ItemData)
+	if (!ItemData || !ActorClass)
 	{
-		return;
+		return false;
 	}
 
-	// If already holding an item, drop it first.
+	// Replace the currently held item if necessary.
 	if (IsHoldingItem())
 	{
 		DropItem();
+
+		// If dropping failed, keep the existing item.
+		if (IsHoldingItem())
+		{
+			return false;
+		}
 	}
 
 	HeldItemData = ItemData;
+	HeldActorClass = ActorClass;
 
 	SpawnHeldItemVisual();
 
 	OnItemPickedUp.Broadcast(ItemData);
 	OnInventoryChanged.Broadcast();
+
+	return true;
+}
+
+void UHandInventoryComponent::UseHeldItem()
+{
+	// Intentionally empty until item-specific primary actions are implemented.
 }
 
 void UHandInventoryComponent::DropItem()
@@ -47,25 +67,28 @@ void UHandInventoryComponent::DropItem()
 		return;
 	}
 
-	if (!PickupActorClass)
+	UWorld* World = GetWorld();
+
+	if (!World || !HeldItemData || !HeldActorClass)
 	{
 		UE_LOG(
 			LogTemp,
 			Warning,
-			TEXT("HandInventoryComponent: PickupActorClass is not set.")
+			TEXT("HandInventoryComponent: Cannot drop item because its world, data, or actor class is missing.")
 		);
 		return;
 	}
 
-	FVector DropPosition = CalculateDropPosition();
+	const FVector DropPosition = CalculateDropPosition();
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = nullptr;
 	SpawnParams.SpawnCollisionHandlingOverride =
 		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-	AActor* DroppedActor = GetWorld()->SpawnActor<AActor>(
-		PickupActorClass,
+	// Recreate the original actor class.
+	AActor* DroppedActor = World->SpawnActor<AActor>(
+		HeldActorClass,
 		DropPosition,
 		FRotator::ZeroRotator,
 		SpawnParams
@@ -76,6 +99,7 @@ void UHandInventoryComponent::DropItem()
 		return;
 	}
 
+	// The recreated actor must support pickup interaction.
 	UPickupComponent* PickupComponent =
 		DroppedActor->FindComponentByClass<UPickupComponent>();
 
@@ -83,21 +107,23 @@ void UHandInventoryComponent::DropItem()
 	{
 		UE_LOG(
 			LogTemp,
-			Warning,
-			TEXT("HandInventoryComponent: PickupActorClass '%s' does not contain a PickupComponent."),
-			*GetNameSafe(PickupActorClass)
+			Error,
+			TEXT("HandInventoryComponent: Spawned class '%s' has no PickupComponent."),
+			*GetNameSafe(HeldActorClass)
 		);
 
 		DroppedActor->Destroy();
 		return;
 	}
 
-	UPickupItemData* DroppedItemData = HeldItemData;
+	// Restore the item's definition.
+	PickupComponent->SetItemData(HeldItemData);
 
-	PickupComponent->SetItemData(DroppedItemData);
-
+	// Clear inventory state only after successful spawning and setup.
 	DestroyHeldItemVisual();
+
 	HeldItemData = nullptr;
+	HeldActorClass = nullptr;
 
 	OnItemDropped.Broadcast();
 	OnInventoryChanged.Broadcast();
@@ -105,7 +131,7 @@ void UHandInventoryComponent::DropItem()
 
 void UHandInventoryComponent::SpawnHeldItemVisual()
 {
-	if (!HeldItemData)
+	if (!HeldItemData || !GetWorld())
 	{
 		return;
 	}
@@ -117,13 +143,12 @@ void UHandInventoryComponent::SpawnHeldItemVisual()
 	SpawnParams.SpawnCollisionHandlingOverride =
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-	HeldItemActor =
-		GetWorld()->SpawnActor<AHeldItem>(
-			AHeldItem::StaticClass(),
-			FVector::ZeroVector,
-			FRotator::ZeroRotator,
-			SpawnParams
-		);
+	HeldItemActor = GetWorld()->SpawnActor<AHeldItem>(
+		AHeldItem::StaticClass(),
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
 
 	if (HeldItemActor)
 	{
@@ -155,14 +180,13 @@ FVector UHandInventoryComponent::CalculateDropPosition()
 
 	if (!Camera)
 	{
-		return Owner->GetActorLocation() +
-			Owner->GetActorForwardVector() * DropDefaultDistance;
+		return Owner->GetActorLocation()
+			+ Owner->GetActorForwardVector() * DropDefaultDistance;
 	}
 
 	const FVector CameraLoc = Camera->GetComponentLocation();
 	const FVector CameraForward = Camera->GetForwardVector();
 
-	// Trace forward from the player's camera.
 	FHitResult HitResult;
 
 	const FVector RayEnd =
@@ -182,18 +206,17 @@ FVector UHandInventoryComponent::CalculateDropPosition()
 	if (bHit)
 	{
 		const FVector DropPos =
-			HitResult.ImpactPoint +
-			HitResult.ImpactNormal * DropSurfaceOffset;
+			HitResult.ImpactPoint
+			+ HitResult.ImpactNormal * DropSurfaceOffset;
 
 		if (IsDropPositionSafe(DropPos, DropSafetyRadius))
 		{
 			return DropPos;
 		}
 
-		// Try a position slightly higher if the first position
-		// is blocked.
 		const FVector AdjustedPos =
-			DropPos + FVector(0.0f, 0.0f, DropSafetyRadius * 2.0f);
+			DropPos
+			+ FVector(0.0f, 0.0f, DropSafetyRadius * 2.0f);
 
 		if (IsDropPositionSafe(AdjustedPos, DropSafetyRadius))
 		{
@@ -201,21 +224,27 @@ FVector UHandInventoryComponent::CalculateDropPosition()
 		}
 	}
 
-	// No usable surface found.
 	return CameraLoc + CameraForward * DropDefaultDistance;
 }
 
 bool UHandInventoryComponent::IsDropPositionSafe(
 	const FVector& Position,
-	float Radius)
+	float Radius) const
 {
-	FCollisionShape Sphere =
+	UWorld* World = GetWorld();
+
+	if (!World)
+	{
+		return false;
+	}
+
+	const FCollisionShape Sphere =
 		FCollisionShape::MakeSphere(Radius);
 
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(GetOwner());
 
-	return !GetWorld()->OverlapBlockingTestByChannel(
+	return !World->OverlapBlockingTestByChannel(
 		Position,
 		FQuat::Identity,
 		ECC_Visibility,

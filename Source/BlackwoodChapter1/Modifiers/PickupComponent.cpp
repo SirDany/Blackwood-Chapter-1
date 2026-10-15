@@ -1,15 +1,15 @@
-// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Modifiers/PickupComponent.h"
+
 #include "Data/PickupItemData.h"
+#include "GameFramework/Actor.h"
 #include "Modifiers/HandInventoryComponent.h"
 
 UPickupComponent::UPickupComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-	ItemData = nullptr;
 
-	// Set default interaction prompt for pickups
+	ItemData = nullptr;
 	InteractionPrompt = FText::FromString("Pick up");
 }
 
@@ -27,9 +27,7 @@ void UPickupComponent::Interact_Implementation(AActor* Interactor)
 
 	if (TryAddToInventory(Interactor))
 	{
-		// Destroy the pickup actor after successful pickup
-		AActor* Owner = GetOwner();
-		if (Owner)
+		if (AActor* Owner = GetOwner())
 		{
 			Owner->Destroy();
 		}
@@ -40,7 +38,10 @@ FText UPickupComponent::GetInteractionPrompt_Implementation() const
 {
 	if (ItemData)
 	{
-		return FText::Format(FText::FromString("Pick up {0}"), ItemData->DisplayName);
+		return FText::Format(
+			FText::FromString("Pick up {0}"),
+			ItemData->DisplayName
+		);
 	}
 
 	return InteractionPrompt;
@@ -48,19 +49,29 @@ FText UPickupComponent::GetInteractionPrompt_Implementation() const
 
 bool UPickupComponent::TryAddToInventory(AActor* Interactor)
 {
-	if (!ItemData)
+	if (!ItemData || !Interactor)
 	{
 		return false;
 	}
 
-	// Find the hand inventory component on the interactor
-	UHandInventoryComponent* Inventory = Interactor->FindComponentByClass<UHandInventoryComponent>();
+	AActor* PickupActor = GetOwner();
 
-	if (Inventory)
+	if (!PickupActor)
 	{
-		Inventory->PickupItem(ItemData);
-		return true;
+		return false;
 	}
 
-	return false;
+	UHandInventoryComponent* Inventory =
+		Interactor->FindComponentByClass<UHandInventoryComponent>();
+
+	if (!Inventory)
+	{
+		return false;
+	}
+
+	// Pass the actual class of the actor being picked up.
+	return Inventory->PickupItem(
+		ItemData,
+		PickupActor->GetClass()
+	);
 }
