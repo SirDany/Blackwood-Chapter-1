@@ -5,10 +5,11 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "../Modifiers/StatComponent.h"
+#include "BlackwoodChapter1Character.h"
 #include "StatsCharacter.generated.h"
 
 UCLASS()
-class BLACKWOODCHAPTER1_API AStatsCharacter : public ACharacter
+class BLACKWOODCHAPTER1_API AStatsCharacter : public ABlackwoodChapter1Character
 {
 	GENERATED_BODY()
 
