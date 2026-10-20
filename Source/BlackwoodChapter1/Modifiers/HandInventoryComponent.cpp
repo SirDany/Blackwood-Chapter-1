@@ -2,54 +2,80 @@
 #include "Modifiers/HandInventoryComponent.h"
 
 #include "Camera/CameraComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "Data/PickupItemData.h"
+#include "Components/SceneComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
-#include "Objects/HeldItem.h"
 #include "Modifiers/PickupComponent.h"
 
 UHandInventoryComponent::UHandInventoryComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-
-	HeldItemData = nullptr;
-	HeldItemActor = nullptr;
-	HeldActorClass = nullptr;
 }
 
-void UHandInventoryComponent::BeginPlay()
+UCameraComponent* UHandInventoryComponent::GetOwnerCamera() const
 {
-	Super::BeginPlay();
+	AActor* Owner = GetOwner();
+
+	return Owner
+		? Owner->FindComponentByClass<UCameraComponent>()
+		: nullptr;
 }
 
-bool UHandInventoryComponent::PickupItem(
-	UPickupItemData* ItemData,
-	TSubclassOf<AActor> ActorClass)
+bool UHandInventoryComponent::PickupActor(AActor* ItemActor)
 {
-	if (!ItemData || !ActorClass)
+	if (!IsValid(ItemActor) || ItemActor == GetOwner())
 	{
 		return false;
 	}
 
-	// Replace the currently held item if necessary.
+	UPickupComponent* Pickup =
+		ItemActor->FindComponentByClass<UPickupComponent>();
+
+	UCameraComponent* Camera = GetOwnerCamera();
+
+	if (!IsValid(Pickup) || !IsValid(Camera))
+	{
+		return false;
+	}
+
+	if (!IsValid(ItemActor->GetRootComponent()))
+	{
+		return false;
+	}
+
 	if (IsHoldingItem())
 	{
 		DropItem();
 
-		// If dropping failed, keep the existing item.
 		if (IsHoldingItem())
 		{
 			return false;
 		}
 	}
 
-	HeldItemData = ItemData;
-	HeldActorClass = ActorClass;
+	// Disable physics and restore any detached primitive attachments first.
+	Pickup->SetHeldState(true);
 
-	SpawnHeldItemVisual();
+	// Attach the actor to the camera only after its physics has been disabled.
+	const bool bAttached = ItemActor->AttachToComponent(
+		Camera,
+		FAttachmentTransformRules::KeepWorldTransform
+	);
 
-	OnItemPickedUp.Broadcast(ItemData);
+	if (!bAttached)
+	{
+		Pickup->SetHeldState(false);
+		return false;
+	}
+
+	// Apply the configured held position, rotation, and scale.
+	ItemActor->SetActorRelativeTransform(
+		Pickup->GetHeldRelativeTransform()
+	);
+
+	HeldActor = ItemActor;
+
+	OnItemPickedUp.Broadcast(HeldActor);
 	OnInventoryChanged.Broadcast();
 
 	return true;
@@ -57,174 +83,124 @@ bool UHandInventoryComponent::PickupItem(
 
 void UHandInventoryComponent::UseHeldItem()
 {
-	// Intentionally empty until item-specific primary actions are implemented.
-}
-
-void UHandInventoryComponent::DropItem()
-{
-	if (!IsHoldingItem())
+	if (!IsValid(HeldActor))
 	{
 		return;
 	}
 
-	UWorld* World = GetWorld();
+	// Item-specific primary actions will be implemented separately.
+	// Using an item does not drop or detach it.
+}
 
-	if (!World || !HeldItemData || !HeldActorClass)
+void UHandInventoryComponent::DropItem()
+{
+	if (!IsValid(HeldActor))
 	{
-		UE_LOG(
-			LogTemp,
-			Warning,
-			TEXT("HandInventoryComponent: Cannot drop item because its world, data, or actor class is missing.")
-		);
+		HeldActor = nullptr;
+		return;
+	}
+
+	AActor* ItemActor = HeldActor.Get();
+
+	UPickupComponent* Pickup =
+		ItemActor->FindComponentByClass<UPickupComponent>();
+
+	if (!IsValid(Pickup))
+	{
 		return;
 	}
 
 	const FVector DropPosition = CalculateDropPosition();
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = nullptr;
-	SpawnParams.SpawnCollisionHandlingOverride =
-		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	FRotator DropRotation = ItemActor->GetActorRotation();
 
-	// Recreate the original actor class.
-	AActor* DroppedActor = World->SpawnActor<AActor>(
-		HeldActorClass,
-		DropPosition,
-		FRotator::ZeroRotator,
-		SpawnParams
+	if (UCameraComponent* Camera = GetOwnerCamera())
+	{
+		DropRotation = FRotator(
+			0.0f,
+			Camera->GetComponentRotation().Yaw,
+			0.0f
+		);
+	}
+
+	// Detach and position the actor before restoring physics.
+	ItemActor->DetachFromActor(
+		FDetachmentTransformRules::KeepWorldTransform
 	);
 
-	if (!DroppedActor)
-	{
-		return;
-	}
+	ItemActor->SetActorLocationAndRotation(
+		DropPosition,
+		DropRotation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics
+	);
 
-	// The recreated actor must support pickup interaction.
-	UPickupComponent* PickupComponent =
-		DroppedActor->FindComponentByClass<UPickupComponent>();
+	Pickup->SetHeldState(false);
 
-	if (!PickupComponent)
-	{
-		UE_LOG(
-			LogTemp,
-			Error,
-			TEXT("HandInventoryComponent: Spawned class '%s' has no PickupComponent."),
-			*GetNameSafe(HeldActorClass)
-		);
+	HeldActor = nullptr;
 
-		DroppedActor->Destroy();
-		return;
-	}
-
-	// Restore the item's definition.
-	PickupComponent->SetItemData(HeldItemData);
-
-	// Clear inventory state only after successful spawning and setup.
-	DestroyHeldItemVisual();
-
-	HeldItemData = nullptr;
-	HeldActorClass = nullptr;
-
-	OnItemDropped.Broadcast();
+	OnItemDropped.Broadcast(ItemActor);
 	OnInventoryChanged.Broadcast();
 }
 
-void UHandInventoryComponent::SpawnHeldItemVisual()
-{
-	if (!HeldItemData || !GetWorld())
-	{
-		return;
-	}
-
-	DestroyHeldItemVisual();
-
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = GetOwner();
-	SpawnParams.SpawnCollisionHandlingOverride =
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	HeldItemActor = GetWorld()->SpawnActor<AHeldItem>(
-		AHeldItem::StaticClass(),
-		FVector::ZeroVector,
-		FRotator::ZeroRotator,
-		SpawnParams
-	);
-
-	if (HeldItemActor)
-	{
-		HeldItemActor->SetItemData(HeldItemData);
-		HeldItemActor->AttachToCamera(GetOwner());
-	}
-}
-
-void UHandInventoryComponent::DestroyHeldItemVisual()
-{
-	if (HeldItemActor)
-	{
-		HeldItemActor->Destroy();
-		HeldItemActor = nullptr;
-	}
-}
-
-FVector UHandInventoryComponent::CalculateDropPosition()
+FVector UHandInventoryComponent::CalculateDropPosition() const
 {
 	AActor* Owner = GetOwner();
 
-	if (!Owner)
+	if (!IsValid(Owner))
 	{
 		return FVector::ZeroVector;
 	}
 
-	UCameraComponent* Camera =
-		Owner->FindComponentByClass<UCameraComponent>();
+	UCameraComponent* Camera = GetOwnerCamera();
 
-	if (!Camera)
+	if (!IsValid(Camera))
 	{
 		return Owner->GetActorLocation()
 			+ Owner->GetActorForwardVector() * DropDefaultDistance;
 	}
 
-	const FVector CameraLoc = Camera->GetComponentLocation();
+	const FVector CameraLocation = Camera->GetComponentLocation();
 	const FVector CameraForward = Camera->GetForwardVector();
 
-	FHitResult HitResult;
+	const FVector TraceEnd =
+		CameraLocation + CameraForward * DropPlacementRange;
 
-	const FVector RayEnd =
-		CameraLoc + CameraForward * DropPlacementRange;
+	FHitResult Hit;
 
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(Owner);
+	QueryParams.AddIgnoredActor(HeldActor);
 
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(
-		HitResult,
-		CameraLoc,
-		RayEnd,
+	if (GetWorld() && GetWorld()->LineTraceSingleByChannel(
+		Hit,
+		CameraLocation,
+		TraceEnd,
 		ECC_Visibility,
-		QueryParams
-	);
-
-	if (bHit)
+		QueryParams))
 	{
-		const FVector DropPos =
-			HitResult.ImpactPoint
-			+ HitResult.ImpactNormal * DropSurfaceOffset;
+		const FVector Candidate =
+			Hit.ImpactPoint
+			+ Hit.ImpactNormal * DropSurfaceOffset;
 
-		if (IsDropPositionSafe(DropPos, DropSafetyRadius))
+		if (IsDropPositionSafe(Candidate, DropSafetyRadius))
 		{
-			return DropPos;
+			return Candidate;
 		}
 
-		const FVector AdjustedPos =
-			DropPos
+		const FVector RaisedCandidate =
+			Candidate
 			+ FVector(0.0f, 0.0f, DropSafetyRadius * 2.0f);
 
-		if (IsDropPositionSafe(AdjustedPos, DropSafetyRadius))
+		if (IsDropPositionSafe(RaisedCandidate, DropSafetyRadius))
 		{
-			return AdjustedPos;
+			return RaisedCandidate;
 		}
 	}
 
-	return CameraLoc + CameraForward * DropDefaultDistance;
+	return CameraLocation
+		+ CameraForward * DropDefaultDistance;
 }
 
 bool UHandInventoryComponent::IsDropPositionSafe(
@@ -233,22 +209,20 @@ bool UHandInventoryComponent::IsDropPositionSafe(
 {
 	UWorld* World = GetWorld();
 
-	if (!World)
+	if (!IsValid(World))
 	{
 		return false;
 	}
 
-	const FCollisionShape Sphere =
-		FCollisionShape::MakeSphere(Radius);
-
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(GetOwner());
+	QueryParams.AddIgnoredActor(HeldActor);
 
 	return !World->OverlapBlockingTestByChannel(
 		Position,
 		FQuat::Identity,
 		ECC_Visibility,
-		Sphere,
+		FCollisionShape::MakeSphere(Radius),
 		QueryParams
 	);
 }

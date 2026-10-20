@@ -5,17 +5,21 @@
 #include "Components/ActorComponent.h"
 #include "HandInventoryComponent.generated.h"
 
-class UPickupItemData;
-class AHeldItem;
 class AActor;
+class UCameraComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnItemPickedUp,
-	UPickupItemData*,
-	ItemData
+	AActor*,
+	ItemActor
 );
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnItemDropped);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnItemDropped,
+	AActor*,
+	ItemActor
+);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChanged);
 
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
@@ -28,10 +32,7 @@ public:
 	UHandInventoryComponent();
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	bool PickupItem(
-		UPickupItemData* ItemData,
-		TSubclassOf<AActor> ActorClass
-	);
+	bool PickupActor(AActor* ItemActor);
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void DropItem();
@@ -40,15 +41,15 @@ public:
 	void UseHeldItem();
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
-	UPickupItemData* GetHeldItem() const
+	AActor* GetHeldActor() const
 	{
-		return HeldItemData;
+		return HeldActor;
 	}
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool IsHoldingItem() const
 	{
-		return HeldItemData != nullptr;
+		return IsValid(HeldActor);
 	}
 
 	UPROPERTY(EditAnywhere, Category = "Drop")
@@ -58,7 +59,7 @@ public:
 	float DropSafetyRadius = 30.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Drop")
-	float DropSurfaceOffset = 50.0f;
+	float DropSurfaceOffset = 10.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Drop")
 	float DropDefaultDistance = 100.0f;
@@ -73,23 +74,13 @@ public:
 	FOnInventoryChanged OnInventoryChanged;
 
 protected:
-	UPROPERTY(VisibleAnywhere, Category = "Inventory")
-	TObjectPtr<UPickupItemData> HeldItemData;
-
-	UPROPERTY(VisibleAnywhere, Category = "Inventory")
-	TObjectPtr<AHeldItem> HeldItemActor;
-
-	// The class of the original world actor being held.
-	UPROPERTY(VisibleAnywhere, Category = "Inventory")
-	TSubclassOf<AActor> HeldActorClass;
-
-	virtual void BeginPlay() override;
+	UPROPERTY(VisibleInstanceOnly, Category = "Inventory")
+	TObjectPtr<AActor> HeldActor = nullptr;
 
 private:
-	void SpawnHeldItemVisual();
-	void DestroyHeldItemVisual();
+	UCameraComponent* GetOwnerCamera() const;
 
-	FVector CalculateDropPosition();
+	FVector CalculateDropPosition() const;
 
 	bool IsDropPositionSafe(
 		const FVector& Position,
